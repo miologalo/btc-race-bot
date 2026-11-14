@@ -7,7 +7,9 @@
 // - Regime: trade only while the latest close is at or above its 120-bar EMA.
 //   Below it the trend is down and every dip keeps dipping, so sit in cash.
 // - Entry: the close sits at least 1.5 rolling standard deviations below its
-//   30-bar EMA (z <= -1.5), i.e. a sharp dip inside a healthy regime.
+//   30-bar EMA (z <= -1.5), i.e. a sharp dip inside a healthy regime, and the
+//   trade's own pool impact at the latest close depth is at most 10 bps, so a
+//   thin pool never eats the edge the dip is supposed to give.
 // - Size: a fixed $300 of the $1,000 paper capital per trade (small size keeps
 //   the pool-impact cost near 3 bps instead of ~10 bps at full size).
 // - Exit: the whole position on +20 bps (take profit), -10 bps (stop), or after
@@ -29,6 +31,7 @@ const TP_BPS = 20; // take profit, bps above the entry close
 const SL_BPS = 10; // stop loss, bps below the entry close
 const MAX_HOLD = 45; // max bars to hold a position
 const MAX_SLIPPAGE_BPS = 100;
+const MAX_IMPACT_BPS = 10; // skip an entry whose own pool impact would cost more than this
 
 /** EMA that seeds as the mean of its first span of closes, then updates by 2 / (span + 1) of the way to each new close. */
 interface Ema {
@@ -114,6 +117,10 @@ await runBars({
     const z = sd > 0 ? (close - fast.value) / sd : 0;
     if (z <= Z_IN && close >= regime.value) {
       const notional = SIZE_USDC < state.cash ? SIZE_USDC : state.cash;
+      // Skip the entry when the pool is too thin for the size: the fill's own
+      // impact would eat the edge the dip is supposed to give.
+      const impact = state.impactBps(SYMBOL, notional);
+      if (impact !== null && impact > BigInt(MAX_IMPACT_BPS)) return [];
       if (notional >= 1_000_000n) {
         pendingEntry = close;
         const buy: BuyInput = { side: 'buy', symbol: SYMBOL, notional_quote_units: notional, max_slippage_bps: MAX_SLIPPAGE_BPS };
